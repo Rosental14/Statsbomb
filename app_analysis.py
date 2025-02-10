@@ -6,6 +6,8 @@ from matplotlib.lines import Line2D
 import seaborn as sns
 from statsbombpy import sb
 from mplsoccer import Sbopen, Pitch, VerticalPitch
+import requests
+import json
 import pickle
 import os
 
@@ -13,12 +15,23 @@ import os
 # CONFIGURAÇÃO INICIAL
 # =========================
 
-# Carregar a lista de competições e temporadas usando StatsBomb
-competitions = sb.competitions()
+# Carregar a lista de competições e temporadas
+
+@st.cache_data
+def carregar_competicoes():
+    url_competitions = "https://raw.githubusercontent.com/statsbomb/open-data/master/data/competitions.json"
+    resp = requests.get(url_competitions)
+    competitions_json = resp.json()
+    return pd.DataFrame(competitions_json)
+
+all_competitions_df = carregar_competicoes()
+
+## Outra opção # Carregar a lista de competições e temporadas usando StatsBombpy
+## all_competitions_df = sb.competitions()
 
 # Seleciona as colunas de interesse e remove duplicatas
-competitions_df = competitions[['competition_name', 'competition_id']].drop_duplicates().reset_index(drop=True)
-seasons_df = competitions[['competition_name', 'season_name', 'season_id']].drop_duplicates().reset_index(drop=True)
+competitions_df = all_competitions_df[['competition_name', 'competition_id']].drop_duplicates().reset_index(drop=True)
+seasons_df = all_competitions_df[['competition_name', 'season_name', 'season_id']].drop_duplicates().reset_index(drop=True)
 
 # ===================================================================
 # INTERFACE DO USUÁRIO (Sidebar) E SELEÇÃO DA COMPETIÇÃO E TEMPORADA
@@ -43,51 +56,58 @@ season_id = filtered_seasons.loc[filtered_seasons['season_name'] == season, 'sea
 # EXTRAÇÃO JOGOS DA COMPETIÇÃO SELECIONADA
 # ===========================================
 
-championship_df = sb.matches(competition_id=comp_id , season_id=season_id )
+if competition and season:
+    @st.cache_data
+    def carregar_jogos(comp_id, season_id):
+        url_matches = f"https://raw.githubusercontent.com/statsbomb/open-data/master/data/matches/{comp_id}/{season_id}.json"
+        matches = requests.get(url_matches).json()
+        return pd.json_normalize(matches, sep='.')
+
+    championship_df = carregar_jogos(comp_id, season_id)
+
+# Correção dos nomes das colunas
+championship_df.columns = championship_df.columns.str.replace("competition.", "", regex=False)
+championship_df.columns = championship_df.columns.str.replace("season.", "", regex=False)
+championship_df.columns = championship_df.columns.str.replace("home_team.", "", regex=False)
+championship_df.columns = championship_df.columns.str.replace("away_team.", "", regex=False)
+
+## Outra forma usando statsbombpy
+## championship_df = sb.matches(competition_id=comp_id , season_id=season_id )
 
 # ===============================================
 # INTERFACE DO USUÁRIO 2ª PARTE - SELEÇÃO EQUIPE
 # ===============================================
 
-teams_list = championship_df['home_team'].sort_values().unique()
+teams_list = championship_df['home_team_name'].sort_values().unique()
 team_selected = st.sidebar.selectbox("Selecione a Equipe", options=teams_list)
 
 # =========================
 # INICIALIZANDO O PARSER
 # =========================
     
-match_df = championship_df.loc[(championship_df['home_team'] == f'{team_selected}')|(championship_df['away_team'] == f'{team_selected}')]
+match_df = championship_df.loc[(championship_df['home_team_name'] == f'{team_selected}')|(championship_df['away_team_name'] == f'{team_selected}')]
 match_list = match_df['match_id'].unique().tolist()
 
-parser = Sbopen()
+@st.cache_data
+def processar_eventos(match_list):
+    parser = Sbopen()
+    all_df = []
 
-# Listas para armazenar os dataframes
-all_df = []
-all_related = []
-all_freeze = []
-all_tactics = []
+    for id in match_list:
+        df, _, _, _ = parser.event(id)
+        all_df.append(df)
 
-# Iterar sobre cada ID de jogo e coletar os dados
-for id in match_list:
-    df, related, freeze, tactics = parser.event(id)
-    
-    # Adicionar os dataframes coletados às listas correspondentes
-    all_df.append(df)
-    all_related.append(related)
-    all_freeze.append(freeze)
-    all_tactics.append(tactics)
+    return pd.concat(all_df, ignore_index=True)
 
-df_combined = pd.concat(all_df, ignore_index=True) # Informações de eventos detalhados
-related_combined = pd.concat(all_related, ignore_index=True) # Informação de eventos relacionados (ex: Pass - Ball Receipt)
-freeze_combined = pd.concat(all_freeze, ignore_index=True) # Informações de coordenada dos eventos
-tactics_combined = pd.concat(all_tactics, ignore_index=True) # informações dos jogadores(nº camisa, posição, nome e ID)
+with st.spinner("Carregando eventos..."):
+    df_combined = processar_eventos(match_list)
 
 # ================================================================
 # INTERFACE DO USUÁRIO 3ª PARTE - SELEÇÃO DO JOGO
 # ================================================================
 
 # Cria a lista de opções: cada item é uma tupla (match_id, "home_team vs away_team")
-match_options = [(row['match_id'], f"{row['home_team']} vs {row['away_team']}") for _, row in match_df.iterrows()]
+match_options = [(row['match_id'], f"{row['home_team_name']} vs {row['away_team_name']}") for _, row in match_df.iterrows()]
 match_options = [("Todos", "Todos")] + match_options
 
 # Cria o selectbox, de modo que o valor retornado seja a tupla completa, mas exibe somente o nome amigável
