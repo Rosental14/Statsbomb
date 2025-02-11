@@ -574,6 +574,7 @@ def shot_analysis(team_selected, match_selected=None, player_selected=None):
     color_map = {
         'Goal': '#0000FF',  # Azul para gol
         'Saved': '#00FF00',  # Verde para defesa
+        'Saved Off Target': '#00FF00',  # Verde para defesa 
         'Off T': '#FF0000',  # Vermelho para fora
         'Blocked': '#FFFF00',  # Amarelo para bloqueado
         'Wayward': '#FFA500',  # Laranja para desviado
