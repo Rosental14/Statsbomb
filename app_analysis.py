@@ -3,13 +3,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
-import seaborn as sns
 from statsbombpy import sb
 from mplsoccer import Sbopen, Pitch, VerticalPitch
 import requests
 import json
-import pickle
-import os
+import gc
 
 # =========================
 # CONFIGURAÇÃO INICIAL
@@ -37,7 +35,7 @@ seasons_df = all_competitions_df[['competition_name', 'season_name', 'season_id'
 # INTERFACE DO USUÁRIO (Sidebar) E SELEÇÃO DA COMPETIÇÃO E TEMPORADA
 # ===================================================================
 
-st.sidebar.header("Filtros para Análise de Métricas")
+st.sidebar.header("Filtros para Análises")
 
 # Seleção de Competição (obrigatório)
 competition = st.sidebar.selectbox("Selecione a Competição", competitions_df['competition_name'].unique())
@@ -89,18 +87,23 @@ match_df = championship_df.loc[(championship_df['home_team_name'] == f'{team_sel
 match_list = match_df['match_id'].unique().tolist()
 
 @st.cache_data
-def processar_eventos(match_list):
+def processar_eventos(match_list, team_selected):
     parser = Sbopen()
     all_df = []
 
-    for id in match_list:
-        df, _, _, _ = parser.event(id)
+    for match_id in match_list:
+        df, _, _, _ = parser.event(match_id)
+        df = df[df['team_name'] == team_selected]
         all_df.append(df)
 
-    return pd.concat(all_df, ignore_index=True)
+    return pd.concat(all_df, ignore_index=True) if all_df else pd.DataFrame()
 
-with st.spinner("Carregando eventos..."):
-    df_combined = processar_eventos(match_list)
+if "df_combined" not in st.session_state:
+    with st.spinner("Carregando eventos..."):
+        st.session_state.all_df = processar_eventos(match_list, team_selected)
+        gc.collect()  # Libera memória após carregamento
+
+df_combined = st.session_state.all_df
 
 # ================================================================
 # INTERFACE DO USUÁRIO 3ª PARTE - SELEÇÃO DO JOGO
@@ -128,13 +131,13 @@ players = df_team['player_name'].sort_values().unique()
 player_selected = st.sidebar.selectbox("Selecione o Jogador (opcional)", options=["Todos"] + list(players))
 
 # Seletor de Métrica (obrigatório)
-metric = st.sidebar.selectbox("Selecione a Métrica", options=["Carry", "Dispossessed", "Dribble", "Heat_Map", "Pass", "Shot"])
+metric = st.sidebar.selectbox("Selecione a Métrica", options=["Shot", "Dispossessed", "Dribble", "Heat_Map", "Pass", "Carry"])
 
 # =========================
 # CABEÇALHO
 # =========================
 
-st.title("Statsbomb Event Data Analysis")
+st.title("Statsbomb - Event Data Analysis")
 st.markdown("**by Renan Rosental - Analista de Desempenho e Dados - www.linkedin.com/in/renan-rosental**")
 st.write(f"Métrica: **{metric}** | Competição: **{competition}** | Temporada: **{season}** | Equipe: **{team_selected}**")
 if match_selected != "Todos":
